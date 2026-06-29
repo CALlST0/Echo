@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Echo Weaver — Shadow Tide</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path d='M32 4 L52 32 L32 60 L12 32 Z' fill='%23ffb142' stroke='%235ce1e6' stroke-width='4' stroke-linejoin='round'/><circle cx='32' cy='24' r='4' fill='%23fff' opacity='0.7'/></svg>">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game"></canvas>
+        <div id="edge-fade"></div>
+        <div id="hud">
+            <div class="hud-item"><span class="icon icon-crystal"></span> <span id="crystal-count">0 / 6</span></div>
+            <div class="hud-item"><span class="icon icon-life"></span> <span id="lives-count">♥ ♥ ♥</span></div>
+            <div class="hud-item" id="tide-hud"><span class="icon icon-tide"></span> <span id="tide-status">Tide Rising</span></div>
+            <div class="hud-item">[Space] Ping</div>
+            <div class="hud-item clickable" id="settings-btn">⚙️ Settings</div>
+            <div class="hud-item clickable" id="reset-btn">🔄 Restart</div>
+            <div class="hud-item clickable" id="mute-btn">🔊</div>
+        </div>
+        <div id="message" class="hidden"></div>
+        <div id="achievement" class="hidden"></div>
+        <div id="touch-layer"></div>
+        <div id="dyn-joy-base"><div id="dyn-joy-knob"></div></div>
+        <div id="mobile-controls" style="display:none">
+            <div id="joystick-zone"><div id="joystick-knob"></div></div>
+        </div>
+        <div id="settings-panel" class="hidden">
+            <div class="settings-content">
+                <h2>Settings</h2>
+                <label>Tide Speed <input type="range" id="tide-speed" min="0.2" max="0.6" step="0.01" value="0.35"> <span id="tide-speed-val">0.35</span></label>
+                <label>Enemies <input type="range" id="enemy-count" min="2" max="7" step="1" value="4"> <span id="enemy-count-val">4</span></label>
+                <label>Repulsion <input type="range" id="repulsion" min="0.2" max="1.5" step="0.01" value="0.7"> <span id="repulsion-val">0.70</span></label>
+                <label>Enemy Speed <input type="range" id="enemy-speed" min="0.5" max="2.0" step="0.1" value="1.0"> <span id="enemy-speed-val">1.0</span></label>
+                <label>Player Speed <input type="range" id="player-speed" min="0.5" max="2.0" step="0.1" value="1.0"> <span id="player-speed-val">1.0</span></label>
+                <button id="close-settings">Close</button>
+                <div class="settings-hint">Enemy count changes apply on restart</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts loaded in dependency order -->
+    <script src="js/config.js"></script>
+    <script src="js/audio.js"></script>
+    <script src="js/map.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
