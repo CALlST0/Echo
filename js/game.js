@@ -1,9 +1,10 @@
+// js/game.js
 window.EW = window.EW || {};
 
 window.EW.State = {
     mapGrid: [], visGrid: [], wallGlow: [],
     player: null, enemies: [], crystals: [], exitPos: null,
-    pings: [], particles: [], tideEffects: [],
+    particles: [], tideEffects: [],
     lives: 3, crystalsCollected: 0, pingCooldownRemaining: 0,
     gameOver: false, gameWon: false, gamePaused: false,
     camera: { x: 0, y: 0, targetX: 0, targetY: 0 },
@@ -13,7 +14,22 @@ window.EW.State = {
     tideRetreatTimer: 0, tideRetreatTarget: 0, playerInTide: false, invulnTimer: 0,
     muted: false, crystalAssignmentCounts: new Array(window.EW.Config.TOTAL_CRYSTALS).fill(0),enemiesAllConsumed: false, initialEnemyCount: 0,
     currentFullMessage: '', messageRevealIndex: 0, messageFadeOut: false,
-    keys: {}, joyActive: false, joyX: 0, joyY: 0, joyPointerId: null, joyOriginX: 0, joyOriginY: 0
+    keys: {}, joyActive: false, joyX: 0, joyY: 0, joyPointerId: null, joyOriginX: 0, joyOriginY: 0,
+    acoustic: {
+        arrivalTime: null,
+        energy: null,
+        gradX: null,
+        gradY: null,
+        currentTime: 0,
+        maxTime: 0,
+        active: false,
+        heapIdx: null,
+        heapTime: null,
+        heapEnergy: null,
+        heapPx: null,
+        heapPy: null,
+        heapSize: 0
+    }
 };
 
 window.EW.Game = {
@@ -52,40 +68,204 @@ window.EW.Game = {
         S.tideEffects = S.tideEffects.filter(e => e.life > 0);
         if (!S.gamePaused && !S.gameOver && !S.gameWon && Math.random() < 0.06) this.spawnTideEffect();
     },
+    
+    computeAcousticField: function(startX, startY) {
+        const C = EW.Config;
+        const S = EW.State;
+        const A = S.acoustic;
+        const cols = C.MAP_COLS;
+        const rows = C.MAP_ROWS;
+
+        A.arrivalTime.fill(Infinity);
+        A.energy.fill(0);
+        A.gradX.fill(0);
+        A.gradY.fill(0);
+        A.heapSize = 0;
+
+        const startC = Math.floor(startX / C.CELL);
+        const startR = Math.floor(startY / C.CELL);
+        const startIdx = startR * cols + startC;
+
+        A.arrivalTime[startIdx] = 0;
+        A.energy[startIdx] = 1.0;
+        
+        A.heapIdx[0] = startIdx;
+        A.heapTime[0] = 0;
+        A.heapEnergy[0] = 1.0;
+        A.heapPx[0] = startX;
+        A.heapPy[0] = startY;
+        A.heapSize = 1;
+
+        const dirs = [
+            { dc: 1, dr: 0, dist: 1 }, { dc: -1, dr: 0, dist: 1 },
+            { dc: 0, dr: 1, dist: 1 }, { dc: 0, dr: -1, dist: 1 },
+            { dc: 1, dr: 1, dist: 1.414 }, { dc: -1, dr: -1, dist: 1.414 },
+            { dc: 1, dr: -1, dist: 1.414 }, { dc: -1, dr: 1, dist: 1.414 }
+        ];
+
+        let maxTime = 0;
+
+        while (A.heapSize > 0) {
+            const cIdx = A.heapIdx[0];
+            const cTime = A.heapTime[0];
+            const cEnergy = A.heapEnergy[0];
+            const cPx = A.heapPx[0];
+            const cPy = A.heapPy[0];
+
+            A.heapSize--;
+            if (A.heapSize > 0) {
+                A.heapIdx[0] = A.heapIdx[A.heapSize];
+                A.heapTime[0] = A.heapTime[A.heapSize];
+                A.heapEnergy[0] = A.heapEnergy[A.heapSize];
+                A.heapPx[0] = A.heapPx[A.heapSize];
+                A.heapPy[0] = A.heapPy[A.heapSize];
+                
+                let i = 0;
+                while (true) {
+                    let l = (i << 1) + 1, r = l + 1, m = i;
+                    if (l < A.heapSize && A.heapTime[l] < A.heapTime[m]) m = l;
+                    if (r < A.heapSize && A.heapTime[r] < A.heapTime[m]) m = r;
+                    if (m !== i) {
+                        [A.heapIdx[i], A.heapIdx[m]] = [A.heapIdx[m], A.heapIdx[i]];
+                        [A.heapTime[i], A.heapTime[m]] = [A.heapTime[m], A.heapTime[i]];
+                        [A.heapEnergy[i], A.heapEnergy[m]] = [A.heapEnergy[m], A.heapEnergy[i]];
+                        [A.heapPx[i], A.heapPx[m]] = [A.heapPx[m], A.heapPx[i]];
+                        [A.heapPy[i], A.heapPy[m]] = [A.heapPy[m], A.heapPy[i]];
+                        i = m;
+                    } else break;
+                }
+            }
+
+            const cr = Math.floor(cIdx / cols);
+            const cc = cIdx % cols;
+
+            for (const dir of dirs) {
+                const nr = cr + dir.dr;
+                const nc = cc + dir.dc;
+                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+                
+                if (dir.dist > 1) {
+                    if (S.mapGrid[cr + dir.dr][cc] === 1 && S.mapGrid[cr][cc + dir.dc] === 1) continue;
+                }
+
+                if (S.mapGrid[nr][nc] === 1) continue; 
+
+                const nIdx = nr * cols + nc;
+                const worldDist = dir.dist * C.CELL;
+                const newTime = cTime + (worldDist / C.ACOUSTIC_SPEED);
+                const dist = newTime * C.ACOUSTIC_SPEED;
+
+                if (dist > C.PING_MAX_RADIUS) continue;
+
+                let spatialFade = 1.0;
+                const fadeStart = C.PING_MAX_RADIUS * C.PING_EDGE_FADE_START;
+                if (dist > fadeStart) {
+                    spatialFade = 1.0 - (dist - fadeStart) / (C.PING_MAX_RADIUS - fadeStart);
+                }
+
+                const newEnergy = cEnergy * C.ACOUSTIC_ENERGY_DECAY * spatialFade;
+
+                if (newTime < A.arrivalTime[nIdx]) {
+                    A.arrivalTime[nIdx] = newTime;
+                    A.energy[nIdx] = newEnergy;
+                    
+                    const dx = cPx - (nc * C.CELL + C.CELL / 2);
+                    const dy = cPy - (nr * C.CELL + C.CELL / 2);
+                    const len = Math.hypot(dx, dy) || 1;
+                    A.gradX[nIdx] = dx / len;
+                    A.gradY[nIdx] = dy / len;
+
+                    let i = A.heapSize++;
+                    A.heapIdx[i] = nIdx;
+                    A.heapTime[i] = newTime;
+                    A.heapEnergy[i] = newEnergy;
+                    A.heapPx[i] = nc * C.CELL + C.CELL / 2;
+                    A.heapPy[i] = nr * C.CELL + C.CELL / 2;
+                    
+                    while (i > 0) {
+                        const p = (i - 1) >> 1;
+                        if (A.heapTime[i] < A.heapTime[p]) {
+                            [A.heapIdx[i], A.heapIdx[p]] = [A.heapIdx[p], A.heapIdx[i]];
+                            [A.heapTime[i], A.heapTime[p]] = [A.heapTime[p], A.heapTime[i]];
+                            [A.heapEnergy[i], A.heapEnergy[p]] = [A.heapEnergy[p], A.heapEnergy[i]];
+                            [A.heapPx[i], A.heapPx[p]] = [A.heapPx[p], A.heapPx[i]];
+                            [A.heapPy[i], A.heapPy[p]] = [A.heapPy[p], A.heapPy[i]];
+                            i = p;
+                        } else break;
+                    }
+                    
+                    if (newTime > maxTime) maxTime = newTime;
+                }
+            }
+        }
+        A.maxTime = maxTime;
+        A.currentTime = 0;
+        A.active = true;
+    },
+
     emitPing: function() {
         const S = EW.State; const C = EW.Config;
         if (S.pingCooldownRemaining > 0 || S.gameOver || S.gameWon || S.gamePaused) return;
+        
         S.pingCooldownRemaining = C.PING_COOLDOWN;
-        S.pings.push({ x: S.player.x, y: S.player.y, radius: C.CELL * 2, maxRadius: C.PING_MAX_RADIUS, speed: C.PING_SPEED, alive: true });
+        
         this.spawnParticles(S.player.x, S.player.y, 35, '#5ce1e6', 170, 0.65);
         S.shakeAmount = Math.max(S.shakeAmount, 2.8);
         EW.audio.playPing();
-        S.enemies.forEach(en => {
-            const d = Math.hypot(en.x - S.player.x, en.y - S.player.y);
-            if (d < C.PING_MAX_RADIUS && en.stunnedTimer <= 0) { en.state = 'alerted'; en.alertTarget = { x: S.player.x, y: S.player.y }; }
-            if (d < C.CELL * 4) { en.stunnedTimer = 0.35; en.vx *= 0.2; en.vy *= 0.2; }
-        });
+        
+        this.computeAcousticField(S.player.x, S.player.y);
     },
-    updatePings: function(dt) {
+
+    updateAcoustics: function(dt) {
         const S = EW.State; const C = EW.Config;
-        for (const p of S.pings) {
-            if (!p.alive) continue;
-            p.radius += p.speed * dt;
-            const gridR = Math.ceil(p.radius / C.CELL) + 1;
-            const pc = Math.floor(p.x / C.CELL), pr = Math.floor(p.y / C.CELL);
-            for (let r = pr - gridR; r <= pr + gridR; r++) {
-                for (let c = pc - gridR; c <= pc + gridR; c++) {
-                    if (r < 0 || r >= C.MAP_ROWS || c < 0 || c >= C.MAP_COLS) continue;
-                    const wx = c * C.CELL + C.CELL / 2, wy = r * C.CELL + C.CELL / 2;
-                    if (Math.hypot(wx - p.x, wy - p.y) <= p.radius && S.mapGrid[r][c] === 1 && this.isExposedWall(c, r)) S.wallGlow[r][c] = 1.0;
+        
+        if (S.acoustic.active) {
+            S.acoustic.currentTime += dt;
+            
+            // Keep active until the visual decay of the last wavefront is completely finished
+            if (S.acoustic.currentTime > S.acoustic.maxTime + C.ACOUSTIC_VISUAL_DECAY_DURATION) {
+                S.acoustic.active = false;
+            } else {
+                // Only populate visGrid and wallGlow while the wave is actually propagating
+                if (S.acoustic.currentTime <= S.acoustic.maxTime) {
+                    const timeWindow = C.ACOUSTIC_VISUAL_WINDOW;
+                    const tCurrent = S.acoustic.currentTime;
+                    
+                    for (let r = 0; r < C.MAP_ROWS; r++) {
+                        for (let c = 0; c < C.MAP_COLS; c++) {
+                            const idx = r * C.MAP_COLS + c;
+                            const t = S.acoustic.arrivalTime[idx];
+                            
+                            if (t < Infinity && Math.abs(tCurrent - t) < timeWindow) {
+                                const energy = S.acoustic.energy[idx];
+                                
+                                S.visGrid[r][c] = Math.max(S.visGrid[r][c], 0.8 * energy); 
+                                
+                                const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
+                                for (const [dc, dr] of dirs) {
+                                    const nr = r + dr, nc = c + dc;
+                                    if (nr >= 0 && nr < C.MAP_ROWS && nc >= 0 && nc < C.MAP_COLS) {
+                                        if (S.mapGrid[nr][nc] === 1) {
+                                            S.wallGlow[nr][nc] = Math.max(S.wallGlow[nr][nc], energy); 
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            this.revealCircle(p.x, p.y, p.radius * C.PING_REVEAL_FACTOR);
-            if (p.radius >= p.maxRadius) p.alive = false;
         }
-        S.pings = S.pings.filter(p => p.alive);
-        for (let r = 0; r < C.MAP_ROWS; r++) for (let c = 0; c < C.MAP_COLS; c++) if (S.wallGlow[r][c] > 0) S.wallGlow[r][c] = Math.max(0, S.wallGlow[r][c] - C.WALL_GLOW_DECAY * dt);
+
+        for (let r = 0; r < C.MAP_ROWS; r++) {
+            for (let c = 0; c < C.MAP_COLS; c++) {
+                if (S.wallGlow[r][c] > 0) {
+                    S.wallGlow[r][c] = Math.max(0, S.wallGlow[r][c] - C.WALL_GLOW_DECAY * dt);
+                }
+            }
+        }
     },
+
     updateVisibility: function(dt) { const S = EW.State; const C = EW.Config; for (let r = 0; r < C.MAP_ROWS; r++) for (let c = 0; c < C.MAP_COLS; c++) S.visGrid[r][c] = Math.max(0, S.visGrid[r][c] - C.VISIBILITY_DECAY * dt); },
 
     updateEnemies: function(dt) {
@@ -112,6 +292,26 @@ window.EW.Game = {
 
         for (let i = S.enemies.length - 1; i >= 0; i--) {
             const e = S.enemies[i];
+
+            if (S.acoustic.active) {
+                const cellIdx = Math.floor(e.y / C.CELL) * C.MAP_COLS + Math.floor(e.x / C.CELL);
+                const timeArrived = S.acoustic.arrivalTime[cellIdx];
+                const energy = S.acoustic.energy[cellIdx];
+
+                if (S.acoustic.currentTime >= timeArrived && S.acoustic.currentTime - dt < timeArrived) {
+                    if (energy > 0.05) {
+                        if (e.stunnedTimer <= 0) {
+                            e.state = 'alerted';
+                            e.alertTarget = { x: S.player.x, y: S.player.y };
+                        }
+                        if (timeArrived * C.ACOUSTIC_SPEED < C.CELL * 4) {
+                            e.stunnedTimer = 0.35;
+                            e.vx *= 0.2;
+                            e.vy *= 0.2;
+                        }
+                    }
+                }
+            }
 
             const distToCenter = Math.hypot(e.x - centerX, e.y - centerY);
             if (distToCenter > S.tideRadius && !e.tideConsuming) {
@@ -457,11 +657,23 @@ window.EW.Game = {
 
     initGame: function() {
         const S = EW.State; const C = EW.Config; const D = EW.DOM;
+        
+        const size = C.MAP_COLS * C.MAP_ROWS;
+        S.acoustic.arrivalTime = new Float32Array(size);
+        S.acoustic.energy = new Float32Array(size);
+        S.acoustic.gradX = new Float32Array(size);
+        S.acoustic.gradY = new Float32Array(size);
+        S.acoustic.heapIdx = new Uint16Array(C.ACOUSTIC_MAX_HEAP);
+        S.acoustic.heapTime = new Float32Array(C.ACOUSTIC_MAX_HEAP);
+        S.acoustic.heapEnergy = new Float32Array(C.ACOUSTIC_MAX_HEAP);
+        S.acoustic.heapPx = new Float32Array(C.ACOUSTIC_MAX_HEAP);
+        S.acoustic.heapPy = new Float32Array(C.ACOUSTIC_MAX_HEAP);
+        S.acoustic.active = false;
+
         const startPos = EW.Map.generateMap();
         S.player = { x: startPos.x, y: startPos.y, vx: 0, vy: 0, radius: C.PLAYER_RADIUS, trailPositions: [] };
         S.visGrid = Array.from({ length: C.MAP_ROWS }, () => Array(C.MAP_COLS).fill(0));
         S.wallGlow = Array.from({ length: C.MAP_ROWS }, () => Array(C.MAP_COLS).fill(0));
-        S.pings = [];
         S.particles = [];
         S.tideEffects = [];
         S.lives = C.TOTAL_LIVES;
@@ -495,8 +707,6 @@ window.EW.Game = {
         const S = EW.State; const C = EW.Config;
         if (S.gamePaused) return;
         
-        // Removed try/catch to allow errors to surface during development
-        
         const realDt = Math.min(dt, 0.15);
         let mx = 0, my = 0;
         if (S.joyActive) { mx = S.joyX; my = S.joyY; }
@@ -522,7 +732,7 @@ window.EW.Game = {
         for (const t of S.player.trailPositions) t.life -= realDt;
         S.player.trailPositions = S.player.trailPositions.filter(t => t.life > 0);
         this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_CELLS * C.CELL);
-        this.updatePings(realDt);
+        this.updateAcoustics(realDt);
         this.updateVisibility(realDt);
         if (S.pingCooldownRemaining > 0) S.pingCooldownRemaining -= realDt;
         if (!S.gameOver && !S.gameWon) {
@@ -635,18 +845,65 @@ window.EW.Game = {
                 if (S.mapGrid[r][c] === 1) {
                     const b = Math.min(1, vis * 1.15);
                     let rr = Math.floor(28 * b), gg = Math.floor(18 * b), bb = Math.floor(38 * b);
-                    if (glow > 0.01) { const p = Math.min(1, glow * 1.2); rr = Math.floor(rr + (200 - rr) * p); gg = Math.floor(gg + (240 - gg) * p); bb = Math.floor(bb + (255 - bb) * p); sx += (Math.random() - 0.5) * glow * 3.5; sy += (Math.random() - 0.5) * glow * 3.5; }
+                    if (glow > 0.01) { 
+                        const p = Math.min(1, glow * 1.5); 
+                        
+                        // Dynamic target color: shifts to pure white at max energy
+                        const targetR = Math.floor(200 + 55 * glow);
+                        const targetG = Math.floor(230 + 25 * glow);
+                        const targetB = 255;
+                        
+                        rr = Math.floor(rr + (targetR - rr) * p); 
+                        gg = Math.floor(gg + (targetG - gg) * p); 
+                        bb = Math.floor(bb + (targetB - bb) * p); 
+                        
+                        // Squared curve for tremble: weak pulses have almost zero tremble
+                        const trembleAmt = glow * glow * 6.0;
+                        sx += (Math.random() - 0.5) * trembleAmt; 
+                        sy += (Math.random() - 0.5) * trembleAmt; 
+                    }
                     ctx.fillStyle = `rgb(${rr},${gg},${bb})`;
                     ctx.fillRect(sx, sy, sw, sh);
                 } else { const b = Math.min(1, vis * 0.95); ctx.fillStyle = `rgb(${Math.floor(7+20*b)},${Math.floor(7+18*b)},${Math.floor(8+32*b)})`; ctx.fillRect(sx, sy, sw, sh); }
             }
 
-        for (const p of S.pings) {
-            if (!p.alive) continue;
-            const sx = p.x * scaleX + offsetX, sy = p.y * scaleY + offsetY, r = p.radius * Math.min(scaleX, scaleY), a = 1 - p.radius / p.maxRadius;
-            ctx.strokeStyle = `rgba(180,240,255,${a*0.9})`; ctx.lineWidth = 2.5 * a + 1;
-            ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+        // --- Acoustic Wavefront Visual ---
+        if (S.acoustic.active) {
+            const A = S.acoustic;
+            const decayDuration = C.ACOUSTIC_VISUAL_DECAY_DURATION;
+            
+            ctx.globalCompositeOperation = 'lighter';
+            
+            for (let r = gridTop; r <= gridBottom; r++) {
+                for (let c = gridLeft; c <= gridRight; c++) {
+                    const idx = r * C.MAP_COLS + c;
+                    const t = A.arrivalTime[idx];
+                    if (t < Infinity) {
+                        const timeSinceArrival = A.currentTime - t;
+                        
+                        if (timeSinceArrival >= 0 && timeSinceArrival < decayDuration) {
+                            let fadeFactor = 1.0 - (timeSinceArrival / decayDuration);
+                            fadeFactor = fadeFactor * fadeFactor * (3.0 - 2.0 * fadeFactor);
+                            
+                            // Brighter color and higher alpha multiplier
+                            const alpha = fadeFactor * 0.85 * A.energy[idx];
+                            
+                            if (alpha > 0.01) {
+                                const sx = c * C.CELL * scaleX + offsetX;
+                                const sy = r * C.CELL * scaleY + offsetY;
+                                const sw = C.CELL * scaleX; 
+                                const sh = C.CELL * scaleY; 
+                                
+                                ctx.fillStyle = `rgba(130, 245, 255, ${alpha})`;
+                                ctx.fillRect(sx, sy, sw, sh);
+                            }
+                        }
+                    }
+                }
+            }
+            ctx.globalCompositeOperation = 'source-over';
         }
+        // ---------------------------------
 
         const tideCX = C.MAP_COLS / 2 * C.CELL * scaleX + offsetX, tideCY = C.MAP_ROWS / 2 * C.CELL * scaleY + offsetY, safeR = S.tideRadius * Math.min(scaleX, scaleY);
         for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + S.frameCount * 0.003, rR = safeR + Math.sin(S.frameCount * 0.08 + i) * 4; ctx.fillStyle = 'rgba(157,78,221,0.2)'; ctx.beginPath(); ctx.arc(tideCX + Math.cos(a) * rR, tideCY + Math.sin(a) * rR, 2.5, 0, Math.PI * 2); ctx.fill(); }

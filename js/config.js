@@ -1,3 +1,4 @@
+// js/config.js
 window.EW = window.EW || {};
 
 window.EW.Config = {
@@ -31,6 +32,14 @@ window.EW.Config = {
     CROWD_AVOID_WEIGHT: 0.45,
     SEPARATION_RADIUS: 20 * 5.5,
     SEPARATION_FORCE_MULT: 80,
+
+    // --- ACOUSTIC SYSTEM CONFIG ---
+    ACOUSTIC_SPEED: 250,
+    ACOUSTIC_ENERGY_DECAY: 0.985,
+    ACOUSTIC_VISUAL_WINDOW: 0.12,        
+    ACOUSTIC_VISUAL_DECAY_DURATION: 0.8, 
+    ACOUSTIC_MAX_HEAP: 5000,
+    PING_EDGE_FADE_START: 0.75,          
 
     settings: {
         tideSpeed: 0.35,
