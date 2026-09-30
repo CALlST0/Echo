@@ -68,3 +68,5 @@ Then visit <http://localhost:8000>. Opening `index.html` directly also works, th
 ## Browser Support
 
 Requires a modern desktop or mobile browser with Canvas 2D and Web Audio API support (Chrome, Edge, Firefox, Safari). Best experienced with sound on. 🎧
+
+Created by Qwen AI with feedback and design by Calisto.
