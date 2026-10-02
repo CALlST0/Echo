@@ -22,8 +22,6 @@ window.EW.State = {
         gradY: null,
         currentTime: 0,
         maxTime: 0,
-        srcX: 0,
-        srcY: 0,
         active: false,
         heapIdx: null,
         heapTime: null,
@@ -87,8 +85,6 @@ window.EW.Game = {
         const startC = Math.floor(startX / C.CELL);
         const startR = Math.floor(startY / C.CELL);
         const startIdx = startR * cols + startC;
-        A.srcX = startX;
-        A.srcY = startY;
 
         A.arrivalTime[startIdx] = 0;
         A.energy[startIdx] = 1.0;
@@ -167,11 +163,7 @@ window.EW.Game = {
                     spatialFade = 1.0 - (dist - fadeStart) / (C.PING_MAX_RADIUS - fadeStart);
                 }
 
-                // Per-step decay is calibrated as DECAY^(1/SUB) so total attenuation over a
-                // fixed world distance matches the legacy coarse-grid behaviour. The base is
-                // precomputed once per ping (identical value for every hop).
-                const stepDecay = Math.pow(C.ACOUSTIC_ENERGY_DECAY, 1 / C.GRID_SUBDIV);
-                const newEnergy = cEnergy * stepDecay * spatialFade;
+                const newEnergy = cEnergy * C.ACOUSTIC_ENERGY_DECAY * spatialFade;
 
                 if (newTime < A.arrivalTime[nIdx]) {
                     A.arrivalTime[nIdx] = newTime;
@@ -238,47 +230,26 @@ window.EW.Game = {
                 if (S.acoustic.currentTime <= S.acoustic.maxTime) {
                     const timeWindow = C.ACOUSTIC_VISUAL_WINDOW;
                     const tCurrent = S.acoustic.currentTime;
-                    const A = S.acoustic;
-
-                    // Scan only the annulus around the current wavefront radius instead of
-                    // iterating all fine cells every frame (the fine grid has 9x the legacy
-                    // cell count). Arrival times grow monotonically with distance from the
-                    // ping source, so cells outside this band cannot fall inside the window.
-                    const reachR = tCurrent * C.ACOUSTIC_SPEED;
-                    const winR = timeWindow * C.ACOUSTIC_SPEED;
-                    const srcX = A.srcX, srcY = A.srcY;
-                    const bandOuter = reachR + winR;
-                    const c0 = Math.max(0, Math.floor((srcX - bandOuter) / C.CELL));
-                    const c1 = Math.min(C.MAP_COLS - 1, Math.ceil((srcX + bandOuter) / C.CELL));
-                    const r0 = Math.max(0, Math.floor((srcY - bandOuter) / C.CELL));
-                    const r1 = Math.min(C.MAP_ROWS - 1, Math.ceil((srcY + bandOuter) / C.CELL));
-                    const bandOuterSq = bandOuter * bandOuter;
-                    const innerR = Math.max(0, reachR - winR);
-                    const bandInnerSq = innerR * innerR;
-
-                    for (let r = r0; r <= r1; r++) {
-                        const wy = r * C.CELL + C.CELL / 2 - srcY;
-                        const wySq = wy * wy;
-                        for (let c = c0; c <= c1; c++) {
-                            const wx = c * C.CELL + C.CELL / 2 - srcX;
-                            const dSq = wx * wx + wySq;
-                            if (dSq > bandOuterSq || dSq < bandInnerSq) continue;
+                    
+                    for (let r = 0; r < C.MAP_ROWS; r++) {
+                        for (let c = 0; c < C.MAP_COLS; c++) {
                             const idx = r * C.MAP_COLS + c;
                             const t = S.acoustic.arrivalTime[idx];
-
+                            
                             if (t < Infinity && Math.abs(tCurrent - t) < timeWindow) {
                                 const energy = S.acoustic.energy[idx];
-
-                                const visVal = energy * 0.8;
-                                if (visVal > S.visGrid[r][c]) S.visGrid[r][c] = visVal;
-
-                                // Fine grid has SUBx more wall cells along the same front; scale
-                                // energy per cell so each keeps the legacy perceived brightness.
-                                const glowVal = energy / C.GRID_SUBDIV;
-                                if (r > 0 && S.mapGrid[r - 1][c] === 1 && glowVal > S.wallGlow[r - 1][c]) S.wallGlow[r - 1][c] = glowVal;
-                                if (r < C.MAP_ROWS - 1 && S.mapGrid[r + 1][c] === 1 && glowVal > S.wallGlow[r + 1][c]) S.wallGlow[r + 1][c] = glowVal;
-                                if (c > 0 && S.mapGrid[r][c - 1] === 1 && glowVal > S.wallGlow[r][c - 1]) S.wallGlow[r][c - 1] = glowVal;
-                                if (c < C.MAP_COLS - 1 && S.mapGrid[r][c + 1] === 1 && glowVal > S.wallGlow[r][c + 1]) S.wallGlow[r][c + 1] = glowVal;
+                                
+                                S.visGrid[r][c] = Math.max(S.visGrid[r][c], 0.8 * energy); 
+                                
+                                const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
+                                for (const [dc, dr] of dirs) {
+                                    const nr = r + dr, nc = c + dc;
+                                    if (nr >= 0 && nr < C.MAP_ROWS && nc >= 0 && nc < C.MAP_COLS) {
+                                        if (S.mapGrid[nr][nc] === 1) {
+                                            S.wallGlow[nr][nc] = Math.max(S.wallGlow[nr][nc], energy); 
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -385,20 +356,18 @@ window.EW.Game = {
 
             const distToPlayer = Math.hypot(e.x - S.player.x, e.y - S.player.y);
             const grid = this.worldToGrid(e.x, e.y);
-            // Legacy tuning was in coarse blocks; express in world units so vision
-            // range is resolution-independent (matches the player glow radius).
-            const visible = distToPlayer < C.PLAYER_GLOW_RADIUS && S.visGrid[grid.r]?.[grid.c] > 0.3;
+            const visible = distToPlayer < 3.2 * C.CELL && S.visGrid[grid.r]?.[grid.c] > 0.3;
             
             if (visible && e.state !== 'hunting' && e.ignorePlayerTimer <= 0) { 
                 e.state = 'hunting'; 
                 e.idleTimer = 0; 
             }
-            if (e.state === 'alerted' && e.alertTarget && Math.hypot(e.x - e.alertTarget.x, e.y - e.alertTarget.y) < C.COARSE_CELL * 3) {
+            if (e.state === 'alerted' && e.alertTarget && Math.hypot(e.x - e.alertTarget.x, e.y - e.alertTarget.y) < C.CELL * 3) {
                 e.state = 'idle';
                 e.alertTarget = null;
                 e.idleTimer = 1 + Math.random() * 2;
             }
-            if (e.state === 'hunting' && (!visible || e.ignorePlayerTimer > 0) && distToPlayer > 3.8 * C.COARSE_CELL) {
+            if (e.state === 'hunting' && (!visible || e.ignorePlayerTimer > 0) && distToPlayer > 3.8 * C.CELL) {
                 e.state = 'alerted';
                 e.alertTarget = { x: S.player.x, y: S.player.y };
             }
@@ -440,7 +409,7 @@ window.EW.Game = {
                     if (c && !c.collected && e.ignoreCrystalTimer <= 0) {
                         const dx = c.x - e.x, dy = c.y - e.y, dist = Math.hypot(dx, dy);
                         const crystalAngle = Math.atan2(dy, dx);
-                        if (dist > C.COARSE_CELL * 2.5) {
+                        if (dist > C.CELL * 2.5) {
                             targetAngle = targetAngle * (1 - C.CRYSTAL_ATTRACTION_WEIGHT) + crystalAngle * C.CRYSTAL_ATTRACTION_WEIGHT;
                         }
                     } else if (!c || c.collected) {
@@ -454,7 +423,7 @@ window.EW.Game = {
                         const dx = c.x - e.x, dy = c.y - e.y, dist = Math.hypot(dx, dy);
                         const crystalAngle = Math.atan2(dy, dx);
                         e.crystalMoteTimer += dt;
-                        if (e.crystalMoteTimer > 0.35 && dist < C.COARSE_CELL * 10 && dist > C.COARSE_CELL * 2) {
+                        if (e.crystalMoteTimer > 0.35 && dist < C.CELL * 10 && dist > C.CELL * 2) {
                             e.crystalMoteTimer = 0;
                             const spawnDist = C.CELL * 0.85;
                             const moteX = e.x + Math.cos(crystalAngle) * spawnDist;
@@ -490,7 +459,7 @@ window.EW.Game = {
                     const strength = (1 - dist / C.CROWD_AVOID_RADIUS) * 1.5;
                     crowdX += (dx / dist) * strength;
                     crowdY += (dy / dist) * strength;
-                    if (dist < C.COARSE_CELL * 4) closeNeighbors++;
+                    if (dist < C.CELL * 4) closeNeighbors++;
                 }
             }
             const crowdLen = Math.hypot(crowdX, crowdY);
@@ -561,14 +530,14 @@ window.EW.Game = {
                 
                 if (!e.lastRegionPos) e.lastRegionPos = { x: e.x, y: e.y };
                 const regionDist = Math.hypot(e.x - e.lastRegionPos.x, e.y - e.lastRegionPos.y);
-                if (regionDist > C.COARSE_CELL * 2) {
+                if (regionDist > C.CELL * 2) {
                     e.lastRegionPos = { x: e.x, y: e.y };
                     e.regionStuckTimer = 0;
                 } else {
                     e.regionStuckTimer += dt;
                     if (e.regionStuckTimer > 1.0 && e.lastStuckRecovery < performance.now() - 600) {
                         let bestDx = 0, bestDy = 0, bestDist = Infinity;
-                        const srGridR = 4 * C.GRID_SUBDIV + 1; // ~4 legacy blocks in fine cells (+1)
+                        const srGridR = Math.ceil(C.CELL * 4 / C.CELL) + 1;
                         const sgx = Math.floor(e.x / C.CELL), sgy = Math.floor(e.y / C.CELL);
                         for (let dr = -srGridR; dr <= srGridR; dr++) {
                             for (let dc = -srGridR; dc <= srGridR; dc++) {
@@ -607,7 +576,7 @@ window.EW.Game = {
                 
                 if (e.stuckTimer > 0.45 && e.lastStuckRecovery < performance.now() - 600) {
                     let bestDx = 0, bestDy = 0, bestDist = Infinity;
-                    const srGridR = 4 * C.GRID_SUBDIV + 1; // ~4 legacy blocks in fine cells (+1)
+                    const srGridR = Math.ceil(C.CELL * 4 / C.CELL) + 1;
                     const sgx = Math.floor(e.x / C.CELL), sgy = Math.floor(e.y / C.CELL);
                     for (let dr = -srGridR; dr <= srGridR; dr++) {
                         for (let dc = -srGridR; dc <= srGridR; dc++) {
@@ -703,8 +672,8 @@ window.EW.Game = {
 
         const startPos = EW.Map.generateMap();
         S.player = { x: startPos.x, y: startPos.y, vx: 0, vy: 0, radius: C.PLAYER_RADIUS, trailPositions: [] };
-        S.visGrid = Array.from({ length: C.MAP_ROWS }, () => new Float32Array(C.MAP_COLS));
-        S.wallGlow = Array.from({ length: C.MAP_ROWS }, () => new Float32Array(C.MAP_COLS));
+        S.visGrid = Array.from({ length: C.MAP_ROWS }, () => Array(C.MAP_COLS).fill(0));
+        S.wallGlow = Array.from({ length: C.MAP_ROWS }, () => Array(C.MAP_COLS).fill(0));
         S.particles = [];
         S.tideEffects = [];
         S.lives = C.TOTAL_LIVES;
@@ -727,7 +696,7 @@ window.EW.Game = {
         D.tideStatusEl.textContent = 'Tide Rising';
         D.achievementEl.classList.remove('show');
         this.updateHUD();
-        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_RADIUS);
+        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_CELLS * C.CELL);
         S.camera.x = S.player.x;
         S.camera.y = S.player.y;
         S.camera.targetX = S.player.x;
@@ -762,7 +731,7 @@ window.EW.Game = {
         }
         for (const t of S.player.trailPositions) t.life -= realDt;
         S.player.trailPositions = S.player.trailPositions.filter(t => t.life > 0);
-        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_RADIUS);
+        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_CELLS * C.CELL);
         this.updateAcoustics(realDt);
         this.updateVisibility(realDt);
         if (S.pingCooldownRemaining > 0) S.pingCooldownRemaining -= realDt;
@@ -826,7 +795,7 @@ window.EW.Game = {
                         S.player.x = safe.x; S.player.y = safe.y; S.player.vx = 0; S.player.vy = 0; S.player.trailPositions = [];
                         S.invulnTimer = 1.5;
                         for (let r = 0; r < C.MAP_ROWS; r++) for (let c = 0; c < C.MAP_COLS; c++) S.visGrid[r][c] *= 0.3;
-                        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_RADIUS);
+                        this.revealCircle(S.player.x, S.player.y, C.PLAYER_GLOW_CELLS * C.CELL);
                         S.enemies.forEach(en => { en.state = 'idle'; en.alertTarget = null; en.stunnedTimer = 0; });
                         this.setMessage('Lost… but you persist', 3.8);
                     }
@@ -920,14 +889,10 @@ window.EW.Game = {
                             const alpha = fadeFactor * 0.85 * A.energy[idx];
                             
                             if (alpha > 0.01) {
-                                // Render at the fine-cell scale so the pulse visibly resolves
-                                // around single-cell obstacles (the legacy coarse-block merge is
-                                // dropped; fill colour/alpha are unchanged). The +0.5 oversize
-                                // keeps adjacent cells seamless, as in the static tile renderer.
                                 const sx = c * C.CELL * scaleX + offsetX;
                                 const sy = r * C.CELL * scaleY + offsetY;
-                                const sw = C.CELL * scaleX + 0.5;
-                                const sh = C.CELL * scaleY + 0.5; 
+                                const sw = C.CELL * scaleX; 
+                                const sh = C.CELL * scaleY; 
                                 
                                 ctx.fillStyle = `rgba(130, 245, 255, ${alpha})`;
                                 ctx.fillRect(sx, sy, sw, sh);

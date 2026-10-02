@@ -2,23 +2,13 @@
 window.EW = window.EW || {};
 
 window.EW.Config = {
-    // --- GRID RESOLUTION ---
-    // The authoritative simulation grid is the fine grid (CELL / GRID_SUBDIV wide).
-    // Legacy "coarse" blocks are a derived view: every coarse block maps to a
-    // GRID_SUBDIV x GRID_SUBDIV group of fine cells (world size is unchanged).
-    GRID_SUBDIV: 3,
-    COARSE_CELL: 20,        // legacy block size in world units (unchanged)
-    CELL: 20 / 3,           // fine cell size in world units (~6.667)
-    COARSE_COLS: 55,
-    COARSE_ROWS: 38,
-    MAP_COLS: 55 * 3,       // fine columns (world width preserved)
-    MAP_ROWS: 38 * 3,       // fine rows (world height preserved)
+    CELL: 20, 
+    MAP_COLS: 55, 
+    MAP_ROWS: 38,
     WORLD_W: 55 * 20, 
     WORLD_H: 38 * 20,
     PLAYER_SPEED: 135, 
-    // Legacy tuning was expressed in coarse blocks; convert to world units so the
-    // value is resolution-independent (3.2 coarse blocks = 64 world units).
-    PLAYER_GLOW_RADIUS: 3.2 * 20,
+    PLAYER_GLOW_CELLS: 3.2, 
     PLAYER_RADIUS: 20 * 0.35,
     PING_MAX_RADIUS: 480, 
     PING_SPEED: 210, 
@@ -48,8 +38,7 @@ window.EW.Config = {
     ACOUSTIC_ENERGY_DECAY: 0.985,
     ACOUSTIC_VISUAL_WINDOW: 0.12,        
     ACOUSTIC_VISUAL_DECAY_DURATION: 0.8, 
-    ACOUSTIC_MAX_HEAP: 30000, // must exceed MAP_COLS*MAP_ROWS (18810 at 3x3) so the
-                              // Dijkstra frontier can never silently overflow the heap
+    ACOUSTIC_MAX_HEAP: 5000,
     PING_EDGE_FADE_START: 0.75,          
 
     settings: {
